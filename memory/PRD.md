@@ -1,0 +1,129 @@
+# ClanChat v4.0 — MVP (spec-aligned)
+
+## What it is
+Privacy-first social network ("Your Personal Clubhouse"). React (Vite + TS) SPA + FastAPI. Capacitor-ready for Android. Auth & Storage on Supabase; Firebase removed. Theme: true-black + indigo/violet (orange #FF5A00 CTA replaced per user).
+
+## Core architecture — the three tiers (enforced server-side)
+- **Public** (green): anyone with an account; only tier that is searchable & likeable (anonymous).
+- **Followers** (amber): approved followers only; follow modes open/approval.
+- **Inner Circle** (violet): invite-only (owner invites, member accepts); DMs always open; no tags on Tier-3 posts.
+`can_view()` gates every post; `can_dm()` gates DMs.
+
+## Built & tested (39/39 backend tests pass)
+- Auth: Supabase Google (web PKCE + Android native Capgo idToken) + sandbox dev-login (real HS256 JWT). Backend verifies Supabase JWT (aud=authenticated).
+- Profiles: auto unique #handle, display name, bio (editable), links; follower count private (owner-only).
+- My Feed: chronological, scope General/Followers, Words/Gallery toggle, tier selector composer, image/video upload (Supabase Storage), #tags.
+- Social graph: follow (open/approval) + requests/accept; Inner Circle invite/accept.
+- DMs: tier-gated, **AES-256-GCM encrypted at rest** (interim before Signal), realtime via WebSocket.
+- Calls: LiveKit token endpoint + in-DM audio/video call (LiveKit components).
+- Likes (public only, anonymous), Search (public only), Trending tags (24h), Activity feed.
+
+## Key endpoints
+/api/dev/token, /api/me, /api/profile(PUT), /api/users/{h}(+/posts), /api/follow/{h}, /api/follow-requests(+/{h}/accept), /api/inner/invite|accept/{h}, /api/inner, /api/feed?scope=, /api/posts(+/{id}/like,DELETE), /api/dms(+/{h}), /api/ws/dm/{h}, /api/search, /api/trending, /api/activity, /api/upload, /api/livekit/token
+
+## Env (all in /app/.env)
+Supabase (URL/anon/service-role/JWT secret/bucket), DM_ENC_KEY (AES-256), LiveKit (URL/key/secret).
+
+## Known / MOCKED-for-sandbox
+- "Quick sandbox sign-in" = real Supabase-signed JWT so app is usable without live Google redirect. Real Google works on localhost/Render after console steps A–D (SETUP.md).
+- App data (posts, follows, DMs) in local MongoDB; Auth + Storage + Calls are real 3rd-party (Supabase, LiveKit). Spec's Supabase-Postgres DB can be migrated later.
+- LiveKit subdomain in URL (rlnieg0m) should be verified by user against console (O vs 0 ambiguity in the paste).
+
+## NOT yet built (spec P2/P3 — next candidates)
+Discussion Boards, group chats (T3 max 15), comments, 18+/NSFW + age verification (Yoti/Veriff/Hive), Choices discovery+ads, Premium/verified shields, payments (Stripe/Xsolla/YooMoney/Printful), screenshot protection, FCM push, Giphy, moderation/CSAM pipeline, Signal Protocol E2E.
+
+## Changelog — Settings + APK/login fixes (this session)
+- Android APK: fixed CI (compileSdk/targetSdk 36, AGP 8.9.1, android-36 SDK install, gradle.properties suppressUnsupportedCompileSdk) — prior fixes were uncommitted; user must "Save to GitHub".
+- Fixed APK black screen: baked PUBLIC Supabase URL/anon key + Google web client id as fallbacks in supabase.ts/nativeGoogle.ts (createClient no longer crashes on empty key); added ErrorBoundary + boot guard in main.tsx (visible error instead of black screen).
+- APK backend connectivity: baked Render backend https://clanchatapp-backend.onrender.com as native fallback in api.ts (computeApiBase) + workflow REACT_APP_API_URL fallback. Sandbox/web unchanged (relative /api).
+- Google native sign-in fix: removed `scopes` from SocialLogin.login (capgo v7 "scopes without modifying main activity" error) + added MainActivity ModifiedMainActivityForSocialLoginPlugin bridge.
+- Backend hardening: DM_ENC_KEY parsing wrapped (_load_dm_key) so bad/missing key can't crash startup (likely Render 502 cause).
+- NEW Settings page (/settings): edit display name, privacy toggles (follow_mode approval, dm_open), sign out, delete account (typed-DELETE confirm). Added sidebar + mobile nav links.
+- NEW backend endpoint: DELETE /api/account (wipes profile/auth/posts/follows/inner/dms/activity/reports). Tested 26/26 backend, 5/5 frontend.
+- PENDING user: (a) Save to GitHub + redeploy Render backend (fixes 502) + rebuild APK; (b) provide shield logo file to integrate into header/login/favicon/Android icon.
+
+## Changelog — Branding + Comfort Zone + Admin (this session, cont.)
+- Brand logo (shield + gold C + sword) integrated: /app/public/logo.png (optimized 256px transparent, 53KB). Used on Login (desktop+mobile), sidebar header; favicon + apple-touch-icon + og:image in index.html.
+- Android launcher icons regenerated at all densities (mipmap-mdpi..xxxhdpi): ic_launcher.png, ic_launcher_round.png, ic_launcher_foreground.png; adaptive ic_launcher_background color set to #0B1020 (navy). Full-res source kept at /tmp only; app uses trimmed versions.
+- Comfort Zone settings section added (NSFW/AI/Strong language/Violence/Drugs toggles), backend profile.comfort_zone + sanitizer + /api/me self-only exposure. Tested 42/42 backend.
+- Admin: added thomasgallacher92@gmail.com to ADMIN_EMAILS (sandbox .env). Prod requires ADMIN_EMAILS env on Render. Admin link (Shield) shows in sidebar when is_admin.
+- Google APK sign-in error [16] = needs Android OAuth client (pkg app.clanchat.mobile + SHA-1 23:C2:C4:7F:B8:6D:1B:4A:9F:5B:4F:21:20:C6:1E:F2:CD:6B:E0:9B) + stable keystore secret ANDROID_KEYSTORE_BASE64. Config only, no code change.
+- Render backend was misconfigured as Node service running old CRA (craco start) -> 502; must be Python web service (rootDir backend, uvicorn start). User recreating it.
+
+## Changelog — Real name visibility + Profile avatar + Admin DANGER ZONE (this session, cont.)
+- Real name: profile.real_name + real_name_visibility (private|inner|followers|public). public_profile shows real_name to others only per visibility; self always sees own. Settings has real-name input + "who can see" selector. Profile shows real_name line under display name (backend-gated).
+- Profile avatar upload: orange? NO — brand/violet camera button on avatar (self only) -> /api/upload -> updateProfile(avatar_url). Kept violet/indigo theme per user choice.
+- Admin DANGER ZONE: POST /api/admin/promote {email} (promote to admin), POST /api/admin/purge-demo {include_admin} (purge alice/bob/teen + optional seeded admin, never self). Deleted counter (db.counters) + admin_stats 'deleted'. UI: DELETED stat card + DANGER ZONE section with 3 buttons + confirm dialogs.
+- Accent color: user chose to KEEP violet/indigo (not switch to old orange).
+- Verified: backend 38/38 passed. Frontend build clean. Frontend UI test pending user go-ahead.
+
+## Changelog — Consolidated Google OAuth to ClanChatApp project
+- Switched Google webClientId from old project (286762294730-2hu26...) to ClanChatApp Web client: 24500940599-ps9kauvvquoh2ldh2iacsb04piui40cs.apps.googleusercontent.com
+- Updated in: src/lib/nativeGoogle.ts (PUBLIC_GOOGLE_WEB_CLIENT_ID), .github/workflows/android-apk.yml fallback, .env.
+- Android client (same project): 24500940599-bbuca... pkg app.clanchat.mobile SHA-1 23:C2:C4:7F:B8:6D:1B:4A:9F:5B:4F:21:20:C6:1E:F2:CD:6B:E0:9B (matches keystore in GitHub secret, verified).
+- USER TODO: add new Web client ID to Supabase Google provider Authorized Client IDs; ensure no stale GitHub secret REACT_APP_GOOGLE_WEB_CLIENT_ID overrides new value; Save to GitHub + rebuild APK.
+
+## Changelog — Admin account + admin management (this session, cont.)
+- Seeded super-admin login: admin@clanchat.app / ClanChatAdmin!2025 (env SEED_ADMIN_EMAIL/PASSWORD override on Render). is_admin + in ADMIN_EMAILS. Saved to memory/test_credentials.md.
+- DB admin allowlist (db.admin_allow); ensure_profile grants is_admin on creation if email in ADMIN_EMAILS or allowlist.
+- Endpoints: GET /api/admin/admins (admins[] with super flag + pending[]), POST /api/admin/admins (add: promote existing or allowlist), POST /api/admin/admins/remove (revoke; blocks env super-admins + self). Tested 32/32.
+- Admin panel: new "Admins" tab -> add admin by email, list admins (super badge / protected), remove, pending allowlist section.
+
+## Changelog — Change password
+- POST /api/auth/change-password {current_password,new_password}: verifies current (pbkdf2), rotates salt+hash, 400 for Google-only accounts / wrong current / <6 chars. /api/me returns has_password (self).
+- Settings: "Change password" card (current/new/confirm) shown only for email/password accounts. Tested 21/21.
+
+## Changelog — "Me, Myself & I" self-DM (Saved Messages)
+- Backend: can_dm(me,me)=True; self room dm:<id>:<id>, encrypted, isolated per user; dm_threads shows self thread. Tested 26/26.
+- Frontend (Messages): pinned "Me, Myself & I" entry at top of thread list (Bookmark icon, gradient), opens /messages/<own handle>; self view header shows "Me, Myself & I / Your private space", hides call buttons, empty-state hint. Normal threads exclude the self entry (dedup).
+
+## Changelog — Login hang fix (Render cold start)
+- ROOT CAUSE of APK "Please wait..." hang: Render free-tier COLD START (~35s; backend returned HTTP 000 then 200 after 35s) + api.ts req() had no timeout -> button hung forever.
+- FIX: api.ts req() now uses 60s AbortController timeout + friendly errors ("server waking up" / "could not reach server"). Verified backend login 21/21, avg 0.195s, seeded admin login OK.
+- USER DEPLOY TODO for full resolution: (1) Save to GitHub so Render redeploys (creates seeded admin@clanchat.app on Atlas + carries all new features); (2) consider Render paid tier to avoid ~35s cold starts; (3) Google [16]: rebuild APK (bakes new webClientId 24500940599-ps9ka...) + add that Web client ID to Supabase > Auth > Providers > Google > Authorized Client IDs + ensure Android client 24500940599-bbuca (pkg app.clanchat.mobile, SHA-1 23:C2...) exists.
+
+## Roadmap — porting old app features (Facebook wall + IG media + TikTok scroll + Telegram DMs)
+Phase 1 DONE (backend 48/48 tests): post reactions (like/love/haha/wow/sad/angry, single per user), threaded comments (add/reply/delete, comment_count), DM message delete (soft, WS broadcast). Frontend: PostCard reactions bar + comments/replies UI; Messages delete-on-hover + deleted state.
+Phase 2 TODO (Telegram DMs): voice messages, GIF/stickers (Giphy/Tenor), pin messages, edit.
+Phase 3 TODO (IG/TikTok): multi-image/video posts, full-screen vertical reels scroll.
+Phase 4 TODO: Wall posts+replies, Discussion Boards, Group chats (max 15).
+Phase 5 TODO: theme/display prefs (light/dark/accent/font), tier sorting/Connections, block/mute/restrict, notifications (FCM), follow requests.
+Phase 6 TODO: admin watchlist, CSAM/CEOP queue, NSFW scan, moderation extras, forgot/reset password.
+NOTE: old zip has committed secrets to rotate (SUPABASE_SERVICE_ROLE_KEY etc).
+
+## Phase 2 DONE (backend 38/38): voice messages (MediaRecorder->Supabase upload->audio DM), media-only messages, pin/unpin messages (WS broadcast, pinned banner), audio playback in bubble. GIFs/stickers still TODO (needs Giphy/Tenor API key from user).
+
+## Phase 2 GIFs + Phase 3 DONE (backend all pass): Giphy integrated (GET /api/giphy/search, key in .env) with GIF picker in DM composer (sends as image DM). Reels: GET /api/reels (video posts), TikTok-style full-screen vertical snap-scroll Reels page (/reels) with IntersectionObserver autoplay, mute toggle, like(love)/comment overlay, author info. Nav link added.
+
+## Phase 5 — Prefs & Social Graph (COMPLETE, backend 32/32 tests passed)
+- Display prefs: theme (dark / light = standard black & white), accent colour (6 options), text size (small/normal/large). Stored on profile, applied app-wide via CSS variables (lib/theme.ts + index.css + tailwind CSS-var tokens).
+- Granular notifications: notif_prefs {follows, wall, reactions, comments, dms, inner} gate what appears on the Activity page (server-side filtering in GET /api/activity).
+- Block / Mute / Restrict (db.relations): block = mutual invisibility + no DMs + severs all follow/inner ties both ways (404 on profile, hidden from feed/search); mute = hide their posts from my feed only; restrict = they can't DM me. Managed from Profile menu + Connections page.
+- Connections manager (/connections, GET /api/connections): tabs for Requests, Followers, Following, Inner Circle, Blocked & Muted with quick actions (accept, remove follower, invite/promote to inner, unfollow, remove inner member, unblock/unmute/un-restrict). New endpoints: POST /api/relations/{handle}, DELETE /api/relations/{handle}, GET /api/relations, GET /api/connections, POST /api/followers/{handle}/remove, DELETE /api/inner/{handle}.
+
+## Feature batch (post-Phase-5): Groups + DM Unread + Restrict Comments (COMPLETE, backend 52/52 passed)
+- Inner-Circle Groups: encrypted private group chats capped at 15 members (Inner-Circle only). Collections db.groups + db.group_messages. Endpoints POST/GET /api/groups, GET /api/groups/{id}, POST /api/groups/{id}/messages, PUT rename, POST/DELETE members, DELETE group; realtime WS /api/ws/group/{id}. Frontend: /groups page with create/manage modals.
+- DM Unread: db.reads tracks last_read per dm room; GET /api/dms returns per-thread unread; GET /api/unread aggregates dms+groups. Frontend: badges on Messages nav + thread rows (polled 20s).
+- Restrict Comments (Instagram-style): comments by users the post author restricted are visible only to the commenter + post author (flagged restricted:true), hidden from everyone else.
+
+## Phase 6 — Admin+ & Safety (COMPLETE, backend 58/58 passed)
+- NSFW AI scanner: REAL Gemini vision (gemini-2.5-flash via emergentintegrations + EMERGENT_LLM_KEY) scans image uploads server-side; unsafe media queued to db.nsfw_queue. Fails open for uploads, never fabricates 'safe'. Admin: GET /api/admin/nsfw, POST /api/admin/nsfw/{id}/resolve (dismiss|remove->quarantine posts).
+- Watchlist: POST /api/admin/users/{h}/watch + /unwatch, GET /api/admin/watchlist; stats add watchlisted + nsfw_open.
+- Admin notes: POST /api/admin/users/{h}/note, GET .../notes (private moderator notes).
+- CSAM/CEOP: POST /api/admin/csam/{id}/escalate (generates CEOP ref) + /resolve.
+- Frontend: Admin panel gains NSFW + Watchlist tabs, Watch/Note buttons on users, CEOP escalate/resolve on CSAM, new stat cards.
+- Requires EMERGENT_LLM_KEY in /app/.env; emergentintegrations added to backend/requirements.txt.
+
+---
+
+## Rebrand: ClanChat → Skali (2026-09-14)
+- **Name:** ClanChat → **Skali** everywhere user-facing (web header, login, onboarding, settings, `<title>`/OG tags, FastAPI title, health endpoint, seeded official account & posts).
+- **Slogan:** "Your personal clubhouse" → **"YOUR PLACE TO GATHER"** (login hero, OG description, feed placeholder, onboarding copy).
+- **Logo:** New Skali monogram (cream on transparent) → `public/logo.png`, favicon, apple-touch, OG image, and all Android launcher icons (all densities + adaptive foreground). Original full lockup saved as `public/skali_full.jpeg`.
+- **Code identifiers renamed (safe):** package name, Capacitor `appName`, Android `app_name`/`title`, backend logger, JWT `iss`, sandbox email domain, sticker CustomEvent name (web + native Java). Deleted dead `src/pages/Chat.tsx` (the only "clan" *feature* code — unrouted/unused).
+- **Infra identifiers KEPT for continuity (NOT changed):** Android `appId` app.clanchat.mobile, Render service names + onrender URLs, Supabase bucket `clanchat-media`, `DB_NAME=clanchat`, built-in admin emails, `system-clanchat` seed id. See finish summary for the impact of changing these.
+
+## Follow-up (2026-09-14): App ID + splash + live-DB migration
+- **Android App ID renamed** `app.clanchat.mobile` → **`app.skali.mobile`**: capacitor.config.ts, android build.gradle (namespace + applicationId), strings.xml (package_name + custom_url_scheme), google-services.json (package_name), moved java package dir + 3 `package` decls, layout XML custom-view class, nativeGoogle comment, DEPLOY/SETUP docs. Firebase project id `clanchat-66513` kept (same project). **Requires user console steps** (new Firebase Android app + fresh google-services.json + OAuth Android client SHA-1) before native Google sign-in / FCM work on the new package.
+- **Splash screens**: web boot splash added to index.html (Skali mark + wordmark + "your place to gather", fades on React mount); native Android `res/drawable*/splash.png` regenerated (logo on #0B1020) for all densities/orientations.
+- **Live-DB migration**: `scripts/rebrand_migration.py` — run once against prod (`MONGO_URL`/`DB_NAME`) to rename the existing official account + posts to Skali.
